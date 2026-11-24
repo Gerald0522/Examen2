@@ -65,7 +65,7 @@
 
         <p>{{ error }}</p>
 
-        <ion-button @click="cargar(true)">
+        <ion-button @click="reiniciarListado">
           Reintentar
         </ion-button>
       </div>
@@ -80,37 +80,52 @@
         <p>No se encontraron equipos.</p>
       </div>
 
-      <!-- M4: Listado de equipos -->
+      <!-- M4 y M6: Listado y eliminación de equipos -->
       <ion-list v-else>
-        <ion-item
+        <ion-item-sliding
           v-for="equipo in equipos"
           :key="equipo.id"
-          :router-link="`/tabs/equipos/${equipo.id}/editar`"
-          detail
         >
-          <ion-label>
-            <h2>{{ equipo.nombre }}</h2>
-
-            <p>
-              {{ equipo.codigo }} · {{ equipo.categoria.nombre }}
-            </p>
-          </ion-label>
-
-          <ion-badge
-            slot="end"
-            :color="colorEstado[equipo.estado]"
+          <ion-item
+            :router-link="`/tabs/equipos/${equipo.id}/editar`"
+            detail
           >
-            {{ equipo.estado }}
-          </ion-badge>
-        </ion-item>
+            <ion-label>
+              <h2>{{ equipo.nombre }}</h2>
+
+              <p>
+                {{ equipo.codigo }} · {{ equipo.categoria.nombre }}
+              </p>
+            </ion-label>
+
+            <ion-badge
+              slot="end"
+              :color="colorEstado[equipo.estado]"
+            >
+              {{ equipo.estado }}
+            </ion-badge>
+          </ion-item>
+
+          <!-- M6: Opción deslizable para eliminar -->
+          <ion-item-options side="end">
+            <ion-item-option
+              color="danger"
+              @click="confirmarEliminacion(equipo, $event)"
+            >
+              <ion-icon slot="start" :icon="trashOutline" />
+              Eliminar
+            </ion-item-option>
+          </ion-item-options>
+
+        </ion-item-sliding>
       </ion-list>
 
       <!-- M4: Paginación -->
-<ion-infinite-scroll
-  :key="claveInfinite"
-  :disabled="!hayMas || !!error"
-  @ion-infinite="cargarMas"
->
+      <ion-infinite-scroll
+        :key="claveInfinite"
+        :disabled="!hayMas || !!error"
+        @ion-infinite="cargarMas"
+      >
         <ion-infinite-scroll-content
           loading-spinner="bubbles"
           loading-text="Cargando más equipos..."
@@ -143,6 +158,10 @@ import {
   IonBadge,
   IonInfiniteScroll,
   IonInfiniteScrollContent,
+  IonItemSliding,
+  IonItemOptions,
+  IonItemOption,
+  alertController,
   onIonViewWillEnter
 } from '@ionic/vue';
 
@@ -154,17 +173,20 @@ import type {
 import {
   add,
   cloudOfflineOutline,
-  searchOutline
+  searchOutline,
+  trashOutline
 } from 'ionicons/icons';
 
 import {
   listar,
+  eliminar,
   type Equipo,
   type Estado
 } from '@/services/equipos';
 
 import { ErrorApi } from '@/services/errores';
-import { useConexion } from '@/composables/useConexion';
+import { mostrarToast } from '@/services/avisos';
+import { useConexion, vibrar } from '@/composables/useConexion';
 
 const colorEstado: Record<Estado, string> = {
   disponible: 'success',
@@ -244,7 +266,9 @@ async function cargar(reiniciar = false) {
       }
 
     } else {
+
       error.value = 'No se pudieron cargar los equipos.';
+
     }
 
   } finally {
@@ -256,18 +280,21 @@ async function cargar(reiniciar = false) {
   }
 }
 
-// M4: Recargar cada vez que se vuelve a la página.
-onIonViewWillEnter(async () => {
+// M4: Reiniciar listado y componente infinite scroll.
+async function reiniciarListado() {
   await cargar(true);
   await nextTick();
   claveInfinite.value++;
+}
+
+// M4: Recargar cada vez que se vuelve a la página.
+onIonViewWillEnter(async () => {
+  await reiniciarListado();
 });
 
 // M4: Buscar equipos desde la primera página.
 async function buscar() {
-  await cargar(true);
-  await nextTick();
-  claveInfinite.value++;
+  await reiniciarListado();
 }
 
 // M4: Actualizar deslizando hacia abajo.
@@ -275,7 +302,7 @@ async function refrescar(evento: RefresherCustomEvent) {
 
   try {
 
-    await cargar(true);
+    await reiniciarListado();
 
   } finally {
 
@@ -298,6 +325,109 @@ async function cargarMas(evento: InfiniteScrollCustomEvent) {
   }
 }
 
-// TODO [M6]: Implementar eliminación de equipos.
+// M6: Confirmar y eliminar un equipo.
+async function confirmarEliminacion(
+  equipo: Equipo,
+  evento: Event
+) {
 
+  // Cerrar el elemento deslizable.
+  const sliding = (evento.target as HTMLElement)
+    .closest('ion-item-sliding');
+
+  await sliding?.close();
+
+  // Mostrar alerta de confirmación.
+  const alerta = await alertController.create({
+    header: 'Eliminar equipo',
+    message: `¿Desea eliminar el equipo ${equipo.nombre}?`,
+    buttons: [
+      {
+        text: 'Cancelar',
+        role: 'cancel'
+      },
+      {
+        text: 'Eliminar',
+        role: 'destructive'
+      }
+    ]
+  });
+
+  await alerta.present();
+
+  const { role } = await alerta.onDidDismiss();
+
+  // Si cancela, no se realiza ninguna eliminación.
+  if (role !== 'destructive') {
+    return;
+  }
+
+  try {
+
+    // Solicitud DELETE a la API.
+    await eliminar(equipo.id);
+
+    // HTTP 204: eliminar únicamente de la lista local.
+    equipos.value = equipos.value.filter(
+      item => item.id !== equipo.id
+    );
+
+    // Vibración correspondiente al M7.
+    try {
+      await vibrar();
+    } catch {
+      // Un fallo de vibración no afecta la eliminación.
+    }
+
+    await mostrarToast(
+      'Equipo eliminado correctamente.',
+      'success'
+    );
+
+  } catch (e) {
+
+    if (e instanceof ErrorApi) {
+
+      // HTTP 409: conservar el equipo y mostrar
+      // el mensaje real de la API.
+      if (e.status === 409) {
+
+        await mostrarToast(
+          e.message,
+          'warning'
+        );
+
+      // HTTP 404: retirar el equipo porque ya no existe.
+      } else if (e.status === 404) {
+
+        equipos.value = equipos.value.filter(
+          item => item.id !== equipo.id
+        );
+
+        await mostrarToast(
+          'El equipo ya no existe.',
+          'warning'
+        );
+
+      // Otros errores, excepto 401.
+      } else if (e.status !== 401) {
+
+        await mostrarToast(
+          e.message,
+          'danger'
+        );
+
+      }
+
+    } else {
+
+      await mostrarToast(
+        'No se pudo eliminar el equipo.',
+        'danger'
+      );
+
+    }
+
+  }
+}
 </script>
