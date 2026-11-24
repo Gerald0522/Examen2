@@ -34,10 +34,17 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
     </application>
 
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- TODO [M7] Declare aquí los permisos de las capacidades nativas que usa la app (estado de la red y vibración). -->
+
+    <!-- M7: Estado de la red -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- M7: Vibración -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
 </manifest>
